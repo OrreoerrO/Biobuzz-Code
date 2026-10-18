@@ -7,43 +7,27 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 @Configurable
-public class Outtake {
+public class OuttakeBack {
 
-    private DcMotorEx leftShooter = null;
     private DcMotorEx rightShooter = null;
 
-    public static String LEFT_SHOOTER_MOTOR_NAME = "frontOuttake";
     public static String RIGHT_SHOOTER_MOTOR_NAME = "backOuttake";
 
-    public static double speedDif1 = 1.0;
-    public static double speedDif2 = 1.0;
-
-    public static double regressionSlope = 0.6;
-    public static double regressionIntercept = 1600.0;
-
-    public static double minTargetTPS = 1000.0;
-    public static double maxTargetTPS = 1770.0;
-
-    public static double farZoneTargetTPS = 2750.0;
-    public static double farZoneMinTargetTPS = 1000.0;
-    public static double farZoneMaxTargetTPS = 3500.0;
-
-    public static double MAX_REGRESSION_DISTANCE_CM = 200.0;
+    public static double minTargetTPS = 0.0;
+    public static double maxTargetTPS = 3000.0;
 
     /*
      * Normal / close-zone feedforward.
      */
-    public static double kV = 0.003;
+    public static double kV = 0.000298;
 
     /*
      * Far-zone feedforward.
      */
-    public static double farZoneKV = 0.0005;
-
-    public static double kS = 0.06;
-    public static double kP = 0.085;
+    public static double kS = 0.0;
+    public static double kP = 0.0005;
     public static double kI = 0.0;
-    public static double kD = 0.001;
+    public static double kD = 0.0;
 
     public static double minPower = 0.0;
     public static double maxPower = 1.0;
@@ -51,27 +35,12 @@ public class Outtake {
     /*
      * Normal / close-zone power limiting.
      */
-    public static double ERROR_POWER_LIMIT_BASE = 0.71;
-    public static double ERROR_POWER_LIMIT_GAIN = 0.0010;
-    public static double ERROR_POWER_LIMIT_MIN = 0.45;
-    public static double ERROR_POWER_LIMIT_MAX = 0.95;
+    public static double ERROR_POWER_LIMIT_BASE = 1.0;
+    public static double ERROR_POWER_LIMIT_GAIN = 0.0;
+    public static double ERROR_POWER_LIMIT_MIN = 1.0;
+    public static double ERROR_POWER_LIMIT_MAX = 1.0;
     public static double ERROR_POWER_LIMIT_ERROR_CAP = 1000.0;
 
-    /*
-     * Far-zone power limiting.
-     *
-     * These are separate so far-zone spin-up can be more aggressive
-     * without affecting close-zone shooting.
-     */
-    public static double farZoneErrorPowerLimitBase = 0.65;
-    public static double farZoneErrorPowerLimitGain = 0.00100;
-    public static double farZoneErrorPowerLimitMin = 0.55;
-    public static double farZoneErrorPowerLimitMax = 1.00;
-    public static double farZoneErrorPowerLimitErrorCap = 1200.0;
-
-    /*
-     * Normal / close-zone ramping.
-     */
     public static double RAMP_UP_PER_SECOND = 20.0; //Test if stable tps
     public static double RAMP_DOWN_PER_SECOND = 6.0;
 
@@ -80,8 +49,6 @@ public class Outtake {
      *
      * Higher ramp-up helps the shooter reach far-zone TPS faster.
      */
-    public static double farZoneRampUpPerSecond = 8.0;
-    public static double farZoneRampDownPerSecond = 8.0;
 
     public static double MIN_VALID_TPS = 50.0;
     public static double MAX_ERROR_FOR_PID = 500.0;
@@ -89,7 +56,6 @@ public class Outtake {
     public static double target = 0.0;
     public static double requestedTarget = 0.0;
     public static double currentTPS = 0.0;
-    public static double leftVelocity = 0.0;
     public static double rightVelocity = 0.0;
     public static double effectiveTPS = 0.0;
 
@@ -114,19 +80,14 @@ public class Outtake {
     private boolean pidInitialised = false;
 
     public void init(HardwareMap hardwareMap) {
-        leftShooter = hardwareMap.get(DcMotorEx.class, LEFT_SHOOTER_MOTOR_NAME);
         rightShooter = hardwareMap.get(DcMotorEx.class, RIGHT_SHOOTER_MOTOR_NAME);
 
-        leftShooter.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
         rightShooter.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
 
-        leftShooter.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
         rightShooter.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
 
-        leftShooter.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
         rightShooter.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
 
-        leftShooter.setDirection(DcMotorSimple.Direction.REVERSE);
         rightShooter.setDirection(DcMotorSimple.Direction.REVERSE);
 
         resetController();
@@ -137,37 +98,21 @@ public class Outtake {
         double previousTarget = target;
 
         requestedTarget = targetTPS;
+
+        if (targetTPS <= 0.0) {
+            stopOuttake();
+            return;
+        }
+
         target = clamp(targetTPS, minTargetTPS, maxTargetTPS);
-        usingFarZoneTarget = false;
 
-        if (previousTarget <= 0.0 && target > 0.0) {
+        if (previousTarget <= 0.0) {
             resetController();
         }
-    }
-
-    public void setFarZoneTargetTPS(double targetTPS) {
-        double previousTarget = target;
-
-        requestedTarget = targetTPS;
-        target = clamp(targetTPS, farZoneMinTargetTPS, farZoneMaxTargetTPS);
-        usingFarZoneTarget = true;
-
-        if (previousTarget <= 0.0 && target > 0.0) {
-            resetController();
-        }
-    }
-
-    public void linearRegression(double distanceCM) {
-        double clampedDistance = clamp(distanceCM, 0.0, MAX_REGRESSION_DISTANCE_CM);
-
-        double calculatedTarget =
-                (regressionSlope * clampedDistance) + regressionIntercept;
-
-        setTargetTPS(calculatedTarget);
     }
 
     public void updatePIDF() {
-        if (leftShooter == null || rightShooter == null) {
+        if (rightShooter == null) {
             return;
         }
 
@@ -183,9 +128,9 @@ public class Outtake {
 
         pidInitialised = true;
 
-        activeKV = getActiveKV();
-        activeRampUpPerSecond = getActiveRampUpPerSecond();
-        activeRampDownPerSecond = getActiveRampDownPerSecond();
+        activeKV = kV;
+        activeRampUpPerSecond = RAMP_UP_PER_SECOND;
+        activeRampDownPerSecond = RAMP_DOWN_PER_SECOND;
 
         double rawError = target - effectiveTPS;
         double error = clamp(rawError, -MAX_ERROR_FOR_PID, MAX_ERROR_FOR_PID);
@@ -220,51 +165,12 @@ public class Outtake {
         previousUpdateTime = now;
     }
 
-    private double getActiveKV() {
-        if (usingFarZoneTarget) {
-            return farZoneKV;
-        }
 
-        return kV;
-    }
-
-    private double getActiveRampUpPerSecond() {
-        if (usingFarZoneTarget) {
-            return farZoneRampUpPerSecond;
-        }
-
-        return RAMP_UP_PER_SECOND;
-    }
-
-    private double getActiveRampDownPerSecond() {
-        if (usingFarZoneTarget) {
-            return farZoneRampDownPerSecond;
-        }
-
-        return RAMP_DOWN_PER_SECOND;
-    }
 
     private double calculatePowerLimitFromError(double error) {
         double cappedError;
         double limit;
 
-        if (usingFarZoneTarget) {
-            cappedError = clamp(
-                    Math.abs(error),
-                    0.0,
-                    farZoneErrorPowerLimitErrorCap
-            );
-
-            limit =
-                    farZoneErrorPowerLimitBase
-                            + (cappedError * farZoneErrorPowerLimitGain);
-
-            return clamp(
-                    limit,
-                    farZoneErrorPowerLimitMin,
-                    farZoneErrorPowerLimitMax
-            );
-        }
 
         cappedError = clamp(
                 Math.abs(error),
@@ -300,10 +206,9 @@ public class Outtake {
     }
 
     private void readVelocities() {
-        leftVelocity = Math.abs(leftShooter.getVelocity()) / speedDif1;
-        rightVelocity = Math.abs(rightShooter.getVelocity()) / speedDif2;
+        rightVelocity = Math.abs(rightShooter.getVelocity());
 
-        effectiveTPS = (leftVelocity + rightVelocity) / 2.0;
+        effectiveTPS = (rightVelocity);
         currentTPS = effectiveTPS;
 
         bothSensorsInvalid = effectiveTPS < MIN_VALID_TPS;
@@ -341,8 +246,7 @@ public class Outtake {
     public void setShooterPower(double power) {
         double clipped = clamp(power, minPower, maxPower);
 
-        leftShooter.setPower(clipped * speedDif1);
-        rightShooter.setPower(clipped * speedDif2);
+        rightShooter.setPower(clipped);
     }
 
     public boolean isAtSpeed(double percentOfTarget) {

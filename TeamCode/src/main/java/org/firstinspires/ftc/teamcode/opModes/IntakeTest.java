@@ -5,10 +5,11 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
-import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.teamcode.opModes.subClasses.Intake;
-import org.firstinspires.ftc.teamcode.opModes.subClasses.Turret;
+import org.firstinspires.ftc.teamcode.opModes.subClasses.OuttakeBack;
+import org.firstinspires.ftc.teamcode.opModes.subClasses.OuttakeFront;
+import org.firstinspires.ftc.teamcode.opModes.subClasses.RobotConstants;
 //import org.firstinspires.ftc.teamcode.opModes.subClasses.Outtake;
 
 @Configurable
@@ -17,28 +18,15 @@ public class IntakeTest extends OpMode {
 
     public Intake intake;
     //public Turret turret;
-    //public Outtake outtake;
+    public OuttakeFront outtakeFront;
+    public OuttakeBack outtakeBack;
+    public RobotConstants robotConstants;
 
     public DcMotor frontRightMotor;
     public DcMotor frontLeftMotor;
     public DcMotor backRightMotor;
     public DcMotor backLeftMotor;
 
-    public DcMotor frontOuttake;
-    public DcMotor backOuttake;
-
-
-    public static double FRONT_INTAKE_SPEED = 1;
-    public static double BACK_INTAKE_SPEED = 1;
-    public static double TURRET_POSITION = 0;
-
-    public static double DRIVE_SPEED = 1;
-
-    public static double outtakeSpeed = 0.5;
-    public static double test = 1;
-
-    public static double frontMulti = 1.0;
-    public static double backMulti = 1.0;
 
     public void init() {
 
@@ -48,22 +36,18 @@ public class IntakeTest extends OpMode {
         //turret = new Turret();
         //turret.init(hardwareMap);
 
-        //outtake = new Outtake();
-        //outtake.init(hardwareMap);
+        outtakeFront = new OuttakeFront();
+        outtakeFront.init(hardwareMap);
+
+        outtakeBack = new OuttakeBack();
+        outtakeBack.init(hardwareMap);
+
+        robotConstants = new RobotConstants();
 
         frontRightMotor = hardwareMap.get(DcMotor.class, "frontRight");
         frontLeftMotor = hardwareMap.get(DcMotor.class, "frontLeft");
         backRightMotor = hardwareMap.get(DcMotor.class, "backRight");
         backLeftMotor = hardwareMap.get(DcMotor.class, "backLeft");
-
-        frontOuttake = hardwareMap.get(DcMotor.class, "frontOuttake");
-        backOuttake = hardwareMap.get(DcMotor.class, "backOuttake");
-
-        frontOuttake.setDirection(DcMotorSimple.Direction.REVERSE);
-        backOuttake.setDirection(DcMotorSimple.Direction.REVERSE);
-
-        frontOuttake.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-        backOuttake.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
 
         frontRightMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         backRightMotor.setDirection(DcMotorSimple.Direction.REVERSE);
@@ -73,7 +57,7 @@ public class IntakeTest extends OpMode {
         backRightMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
         backLeftMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.BRAKE);
 
-        TURRET_POSITION = 0;
+        RobotConstants.TURRET_POSITION = 0;
 
     }
 
@@ -84,36 +68,50 @@ public class IntakeTest extends OpMode {
         driveRobot();
 
         telemetry();
+        UpdatePIDF();
+
+
     }
 
     public void handleControls() {
 
         if (gamepad1.right_bumper) {
-            intake.intake(FRONT_INTAKE_SPEED, BACK_INTAKE_SPEED);
+            intake.intake(RobotConstants.FRONT_INTAKE_SPEED, RobotConstants.BACK_INTAKE_SPEED);
         } else if (gamepad1.left_bumper) {
-            intake.intake(-FRONT_INTAKE_SPEED, -BACK_INTAKE_SPEED);
+            intake.intake(-RobotConstants.FRONT_INTAKE_SPEED, -RobotConstants.BACK_INTAKE_SPEED);
         } else {
             intake.stopIntake();
         }
 
         if (gamepad1.cross) {
-            frontOuttake.setPower(outtakeSpeed);
-            backOuttake.setPower(outtakeSpeed);
+            outtakeFront.setTargetTPS(RobotConstants.FrontOuttakeTPS);
+            outtakeBack.setTargetTPS(RobotConstants.BackOuttakeTPS);
+
         }
 
         if (gamepad1.triangle) {
-            frontOuttake.setPower(0);
-            backOuttake.setPower(0);
+            outtakeFront.stopOuttake();
+            outtakeBack.stopOuttake();
         }
 
-        TURRET_POSITION = gamepad2.left_stick_x * 180;
+        if (gamepad1.dpadUpWasPressed()) {
+            RobotConstants.FRONT_INTAKE_SPEED += 0.01;
+            RobotConstants.BACK_INTAKE_SPEED += 0.01;
+        }
+
+        if (gamepad1.dpadDownWasPressed()) {
+            RobotConstants.FRONT_INTAKE_SPEED -= 0.01;
+            RobotConstants.BACK_INTAKE_SPEED -= 0.01;
+        }
+
+        RobotConstants.TURRET_POSITION = gamepad2.left_stick_x * 180;
        // turret.aimTurret((int) Math.round(TURRET_POSITION));
     }
 
     public void driveRobot() {
-        double forward = gamepad1.left_stick_y * DRIVE_SPEED;
-        double strafe = -gamepad1.left_stick_x * DRIVE_SPEED;
-        double turn = -gamepad1.right_stick_x * DRIVE_SPEED;
+        double forward = gamepad1.left_stick_y * RobotConstants.DRIVE_SPEED;
+        double strafe = -gamepad1.left_stick_x * RobotConstants.DRIVE_SPEED;
+        double turn = -gamepad1.right_stick_x * RobotConstants.DRIVE_SPEED;
 
         double denominator = Math.max(Math.abs(forward) + Math.abs(strafe) + Math.abs(turn), 1);
         double frontLeftPower = (forward + strafe + turn) / denominator;
@@ -129,9 +127,16 @@ public class IntakeTest extends OpMode {
     }
 
     public void telemetry() {
-        telemetry.addData("test", test);
-        //telemetry.addData("leftOuttakeSpeed", Outtake.leftVelocity);
-        //telemetry.addData("rightOuttakeSpeed", Outtake.rightVelocity);
+        telemetry.addData("FrontOuttakeSpeed", OuttakeFront.leftVelocity);
+        telemetry.addData("BackOuttakeSpeed", OuttakeBack.rightVelocity);
+        telemetry.addData("IntakeFrontSpeed", RobotConstants.FRONT_INTAKE_SPEED);
+        telemetry.addData("IntakeBackSpeed", RobotConstants.BACK_INTAKE_SPEED);
+        telemetry.update();
+    }
+
+    public void UpdatePIDF() {
+        outtakeFront.updatePIDF();
+        outtakeBack.updatePIDF();
     }
     /*public void handleTurret() {
 
