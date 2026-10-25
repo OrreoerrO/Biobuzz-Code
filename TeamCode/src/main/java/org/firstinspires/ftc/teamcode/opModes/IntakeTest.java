@@ -40,9 +40,28 @@ public class IntakeTest extends OpMode {
 
     private Servo blockServo;
 
+    private String allianceLabel = "UNKNOWN";
+
+    public static double BLUE_GOAL_X = 6.0;
+    public static double BLUE_GOAL_Y = 138.0;
+
+    public static double RED_GOAL_X = 138.0;
+    public static double RED_GOAL_Y = 138.0;
+
+    public static double TELEOP_RESET_X = 24.0;
+    public static double TELEOP_RESET_Y = 138.0;
+    public static double TELEOP_RESET_HEADING_DEG = 145.0;
+
     public static double TELEOP_GOAL_X = 6.0;
     public static double TELEOP_GOAL_Y = 138.0;
 
+    public static double BLUE_RESET_X = 24.0;
+    public static double BLUE_RESET_Y = 138.0;
+    public static double BLUE_RESET_HEADING_DEG = 145.0;
+
+    public static double RED_RESET_X = 120.0;
+    public static double RED_RESET_Y = 138.0;
+    public static double RED_RESET_HEADING_DEG = 35.0;
     private boolean previousG1DpadUp = false;
     private boolean previousG1DpadRight = false;
     private boolean previousLeftBumper = false;
@@ -121,6 +140,14 @@ public class IntakeTest extends OpMode {
 
 
         turret.setForward();
+
+        applyAllianceFromPoseStorage();
+
+        if (PoseStorage.currentPose != null) {
+            follower.setPose(PoseStorage.currentPose);
+        } else {
+            follower.setPose(getTeleOpResetPose());
+        }
 
     }
 
@@ -388,6 +415,22 @@ public class IntakeTest extends OpMode {
         telemetry.update();
     }
 
+    private void handlePoseReset() {
+        boolean currentDpadRight = gamepad1.dpad_right;
+
+        if (currentDpadRight && !previousG1DpadRight) {
+            Pose resetPose = getTeleOpResetPose();
+
+            follower.setPose(resetPose);
+            PoseStorage.setPose(resetPose);
+
+            autoAimMode = true;
+            updateTurretTargetFromTeleOpGoal();
+        }
+
+        previousG1DpadRight = currentDpadRight;
+    }
+
     private void updateTurretTargetFromTeleOpGoal() {
         turret.setTargetPose(getTeleOpGoalPose());
     }
@@ -466,6 +509,51 @@ public class IntakeTest extends OpMode {
                 -1.0,
                 1.0
         );
+    }
+
+    private Pose getTeleOpResetPose() {
+        return new Pose(
+                TELEOP_RESET_X,
+                TELEOP_RESET_Y,
+                Math.toRadians(TELEOP_RESET_HEADING_DEG)
+        );
+    }
+
+    private void applyAllianceFromPoseStorage() {
+        if (PoseStorage.isRed()) {
+            allianceLabel = "RED";
+
+            TELEOP_GOAL_X = RED_GOAL_X;
+            TELEOP_GOAL_Y = RED_GOAL_Y;
+
+            TELEOP_RESET_X = RED_RESET_X;
+            TELEOP_RESET_Y = RED_RESET_Y;
+            TELEOP_RESET_HEADING_DEG = RED_RESET_HEADING_DEG;
+
+            return;
+        }
+
+        if (PoseStorage.isBlue()) {
+            allianceLabel = "BLUE";
+
+            TELEOP_GOAL_X = BLUE_GOAL_X;
+            TELEOP_GOAL_Y = BLUE_GOAL_Y;
+
+            TELEOP_RESET_X = BLUE_RESET_X;
+            TELEOP_RESET_Y = BLUE_RESET_Y;
+            TELEOP_RESET_HEADING_DEG = BLUE_RESET_HEADING_DEG;
+
+            return;
+        }
+
+        allianceLabel = "UNKNOWN - DEFAULT BLUE";
+
+        TELEOP_GOAL_X = BLUE_GOAL_X;
+        TELEOP_GOAL_Y = BLUE_GOAL_Y;
+
+        TELEOP_RESET_X = BLUE_RESET_X;
+        TELEOP_RESET_Y = BLUE_RESET_Y;
+        TELEOP_RESET_HEADING_DEG = BLUE_RESET_HEADING_DEG;
     }
 
     private double clip(
