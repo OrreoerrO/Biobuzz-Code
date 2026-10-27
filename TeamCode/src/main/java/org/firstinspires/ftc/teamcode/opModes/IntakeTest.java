@@ -2,12 +2,12 @@ package org.firstinspires.ftc.teamcode.opModes;
 
 import com.bylazar.configurables.annotations.Configurable;
 import com.pedropathing.api.PoseFactory;
+import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
+import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.Servo;
 
 import org.firstinspires.ftc.teamcode.opModes.subClasses.Brakes;
@@ -17,6 +17,8 @@ import org.firstinspires.ftc.teamcode.opModes.subClasses.PoseStorage;
 import org.firstinspires.ftc.teamcode.opModes.subClasses.RobotConstants;
 import org.firstinspires.ftc.teamcode.opModes.subClasses.Turret;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
+
+import java.util.List;
 
 @Configurable
 @TeleOp(name = "Intake Test", group = "Main")
@@ -31,14 +33,12 @@ public class IntakeTest extends OpMode {
 
     private Turret turret;
 
+    // The follower owns the mecanum drivetrain (and its four drive motors).
     private Follower follower;
 
-    private DcMotor frontRightMotor;
-    private DcMotor frontLeftMotor;
-    private DcMotor backRightMotor;
-    private DcMotor backLeftMotor;
-
     private Servo blockServo;
+
+    private List<LynxModule> hubs;
 
     private String allianceLabel = "UNKNOWN";
 
@@ -62,11 +62,28 @@ public class IntakeTest extends OpMode {
     public static double RED_RESET_X = 120.0;
     public static double RED_RESET_Y = 138.0;
     public static double RED_RESET_HEADING_DEG = 35.0;
+
+    // Drive input signs. Pedro's convention is forward = -stickY,
+    // strafe = -stickX (positive = left), turn = -stickX (positive = CCW).
+    // Flip any of these from the dashboard if the robot drives the wrong way.
+    public static double FORWARD_SIGN = -1.0;
+    public static double STRAFE_SIGN = -1.0;
+    public static double TURN_SIGN = -1.0;
+    // Cubic shaping on strafe and turn gives finer control at low stick values.
+    public static boolean CUBIC_STRAFE_TURN = true;
+
+    // Idle speed as a fraction of RobotConstants.OUTTAKE_TPS (0 = no idle spin).
+    public static double IDLE_FRACTION = 0.5;
+
+    // Press gamepad2 dpad up to turn off auto-aim and set the turret to this position.
+    public static double TURRET_OVERRIDE_POSITION = 0.5;
+
     private boolean previousG1DpadUp = false;
     private boolean previousG1DpadRight = false;
     private boolean previousLeftBumper = false;
 
     private boolean autoAimMode = true;
+    private boolean shooterActive = false;
 
     private double estimatedFieldVelocityX = 0.0;
     private double estimatedFieldVelocityY = 0.0;
@@ -75,6 +92,13 @@ public class IntakeTest extends OpMode {
     public void init() {
 
         follower = Constants.create(hardwareMap);
+
+        // Manual bulk caching: one hub read per loop instead of one per call.
+        // clearBulkCache() MUST be called at the top of every loop.
+        hubs = hardwareMap.getAll(LynxModule.class);
+        for (LynxModule hub : hubs) {
+            hub.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
+        }
 
         intake = new Intake();
         intake.init(hardwareMap);
@@ -88,56 +112,9 @@ public class IntakeTest extends OpMode {
         turret = new Turret();
         turret.init(hardwareMap);
 
-        frontRightMotor = hardwareMap.get(
-                DcMotor.class,
-                "frontRight"
-        );
-
-        frontLeftMotor = hardwareMap.get(
-                DcMotor.class,
-                "frontLeft"
-        );
-
-        backRightMotor = hardwareMap.get(
-                DcMotor.class,
-                "backRight"
-        );
-
-        backLeftMotor = hardwareMap.get(
-                DcMotor.class,
-                "backLeft"
-        );
-
         blockServo = hardwareMap.get(Servo.class, "blockServo");
-
-        frontRightMotor.setDirection(
-                DcMotorSimple.Direction.REVERSE
-        );
-
-        backRightMotor.setDirection(
-                DcMotorSimple.Direction.REVERSE
-        );
-
-        frontRightMotor.setZeroPowerBehavior(
-                DcMotor.ZeroPowerBehavior.BRAKE
-        );
-
-        frontLeftMotor.setZeroPowerBehavior(
-                DcMotor.ZeroPowerBehavior.BRAKE
-        );
-
-        backRightMotor.setZeroPowerBehavior(
-                DcMotor.ZeroPowerBehavior.BRAKE
-        );
-
-        backLeftMotor.setZeroPowerBehavior(
-                DcMotor.ZeroPowerBehavior.BRAKE
-        );
-
         blockServo.setDirection(Servo.Direction.FORWARD);
-
         blockServo.setPosition(RobotConstants.blockClosePos);
-
 
         turret.setForward();
 
@@ -148,24 +125,24 @@ public class IntakeTest extends OpMode {
         } else {
             follower.setPose(getTeleOpResetPose());
         }
-
     }
 
     @Override
     public void loop() {
 
+        clearBulkCache();
+
         handleControls();
 
+        // Sends manual drive powers, then updates localizer and drivetrain.
         driveRobot();
 
-        outtake.updatePF();
+        outtake.update();
 
         displayTelemetry();
 
         Pose currentPose = follower.pose();
         PoseStorage.setPose(currentPose);
-
-        double distCM = distanceToTeleOpGoalCM(currentPose);
 
         updateTurretAim(currentPose);
 
@@ -196,8 +173,8 @@ public class IntakeTest extends OpMode {
 
             if (RobotConstants.timer > RobotConstants.delayAmount) {
                 intake.intake(
-                        RobotConstants.FRONT_INTAKE_SPEED,
-                        RobotConstants.BACK_INTAKE_SPEED
+                        RobotConstants.FRONT_FEED_SPEED,
+                        RobotConstants.BACK_FEED_SPEED
                 );
             }
 
@@ -219,34 +196,47 @@ public class IntakeTest extends OpMode {
         // OUTTAKE
         // =====================================================
 
-        if (gamepad1.cross) {
-            outtake.setTargetTPS(
-                    RobotConstants.OUTTAKE_TPS
-            );
+        // The shooter idles by default. Right bumper (intake) returns it to idle,
+        // cross (or triangle for idle) switches modes. Cross is checked last so it
+        // wins if pressed together with the intake button.
+        if (gamepad1.right_bumper) {
+            shooterActive = false;
         }
 
         if (gamepad1.triangle) {
-            outtake.stopOuttake();
+            shooterActive = false;
         }
 
-        // =====================================================
-        // INTAKE SPEED TUNING
-        // =====================================================
+        if (gamepad1.cross) {
+            shooterActive = true;
+        }
+
+        // The target follows RobotConstants.OUTTAKE_TPS every loop, so Panels edits
+        // take effect live in both modes.
+        double shootTPS = RobotConstants.OUTTAKE_TPS;
+        double idleTPS = shootTPS * Math.max(0.0, IDLE_FRACTION);
+
+        outtake.setTargetTPS(shooterActive ? shootTPS : idleTPS);
 
         // =====================================================
-        // FUTURE TURRET
+        // TURRET
         // =====================================================
 
-        //RobotConstants.TURRET_POSITION =
-        //        gamepad2.left_stick_x * 180.0;
+        // gamepad2 dpad up: auto-aim OFF and turret to the override position.
+        if (gamepad2.dpadUpWasPressed()) {
+            autoAimMode = false;
+            RobotConstants.TURRET_POSITION = TURRET_OVERRIDE_POSITION;
+        }
 
-        if (gamepad1.square) {
-            RobotConstants.TURRET_POSITION = 0;
+        // gamepad1 square: auto-aim back ON.
+        if (gamepad1.squareWasPressed()) {
+            autoAimMode = true;
+            updateTurretTargetFromTeleOpGoal();
         }
 
         if (gamepad1.dpadRightWasPressed() && RobotConstants.TURRET_POSITION < 1) {
             RobotConstants.TURRET_POSITION += 0.05;
-        } else if (gamepad1.dpadLeftWasPressed()  && RobotConstants.TURRET_POSITION > 0) {
+        } else if (gamepad1.dpadLeftWasPressed() && RobotConstants.TURRET_POSITION > 0) {
             RobotConstants.TURRET_POSITION -= 0.05;
         }
 
@@ -263,47 +253,29 @@ public class IntakeTest extends OpMode {
         }
     }
 
+    private void clearBulkCache() {
+        for (LynxModule hub : hubs) {
+            hub.clearBulkCache();
+        }
+    }
+
     private void driveRobot() {
 
-        double forward =
-                gamepad1.left_stick_y
-                        * RobotConstants.DRIVE_SPEED;
+        double strafeInput = gamepad1.left_stick_x;
+        double turnInput = gamepad1.right_stick_x;
 
-        double strafe =
-                -gamepad1.left_stick_x
-                        * RobotConstants.DRIVE_SPEED;
+        if (CUBIC_STRAFE_TURN) {
+            strafeInput = Math.pow(strafeInput, 3);
+            turnInput = Math.pow(turnInput, 3);
+        }
 
-        double turn =
-                -gamepad1.right_stick_x
-                        * RobotConstants.DRIVE_SPEED;
+        double forward = FORWARD_SIGN * gamepad1.left_stick_y * RobotConstants.DRIVE_SPEED;
+        double strafe = STRAFE_SIGN * strafeInput * RobotConstants.DRIVE_SPEED;
+        double turn = TURN_SIGN * turnInput * RobotConstants.DRIVE_SPEED;
 
-        double denominator = Math.max(
-                Math.abs(forward)
-                        + Math.abs(strafe)
-                        + Math.abs(turn),
-                1.0
-        );
-
-        double frontLeftPower =
-                (forward + strafe + turn)
-                        / denominator;
-
-        double backLeftPower =
-                (forward - strafe + turn)
-                        / denominator;
-
-        double frontRightPower =
-                (forward - strafe - turn)
-                        / denominator;
-
-        double backRightPower =
-                (forward + strafe - turn)
-                        / denominator;
-
-        frontLeftMotor.setPower(frontLeftPower);
-        frontRightMotor.setPower(frontRightPower);
-        backLeftMotor.setPower(backLeftPower);
-        backRightMotor.setPower(backRightPower);
+        // Pedro's Mecanum drivetrain normalizes and applies the wheel powers.
+        follower.manual(new DrivePowers(forward, strafe, turn));
+        follower.update();
     }
 
     private void displayTelemetry() {
@@ -312,103 +284,58 @@ public class IntakeTest extends OpMode {
         // OUTTAKE TARGETS
         // =====================================================
 
-        telemetry.addData(
-                "Configured TPS",
-                RobotConstants.OUTTAKE_TPS
-        );
-
-        telemetry.addData(
-                "Active TPS",
-                outtake.getTargetTPS()
-        );
+        telemetry.addData("Configured TPS", RobotConstants.OUTTAKE_TPS);
+        telemetry.addData("Shooter Mode", shooterActive ? "SHOOT" : "IDLE");
+        telemetry.addData("Active TPS", outtake.getTargetTPS());
 
         // =====================================================
         // VELOCITY
         // =====================================================
 
-        telemetry.addData(
-                "Current TPS",
-                outtake.getCurrentTPS()
-        );
-
-        telemetry.addData(
-                "Front TPS",
-                outtake.getFrontVelocityTPS()
-        );
-
-        telemetry.addData(
-                "Back TPS",
-                outtake.getBackVelocityTPS()
-        );
+        telemetry.addData("Current TPS (filtered)", outtake.getCurrentTPS());
+        telemetry.addData("Raw TPS", outtake.getRawTPS());
+        telemetry.addData("Slave TPS (diagnostic)", outtake.getSlaveVelocityTPS());
 
         // =====================================================
         // CONTROLLER
         // =====================================================
 
-        telemetry.addData(
-                "Error TPS",
-                outtake.getErrorTPS()
-        );
-
-        telemetry.addData(
-                "Commanded Power",
-                outtake.getCommandedPower()
-        );
-
-        telemetry.addData(
-                "At Speed",
-                outtake.isAtSpeed(50.0)
-        );
+        telemetry.addData("Error TPS", outtake.getErrorTPS());
+        telemetry.addData("Commanded Power", outtake.getCommandedPower());
+        telemetry.addData("At Speed", outtake.isAtSpeed(50.0));
 
         // =====================================================
         // MOTOR OUTPUTS
         // =====================================================
 
-        telemetry.addData(
-                "Front Motor Power",
-                outtake.getFrontMotorPower()
-        );
+        telemetry.addData("Master Motor Power", outtake.getMasterPower());
+        telemetry.addData("Slave Motor Power", outtake.getSlavePower());
 
-        telemetry.addData(
-                "Back Motor Power",
-                outtake.getBackMotorPower()
-        );
+        // =====================================================
+        // VOLTAGE COMPENSATION
+        // =====================================================
+
+        telemetry.addData("Battery Voltage (filtered)", outtake.getVoltage());
+        telemetry.addData("Voltage Scale", outtake.getVoltageScale());
 
         // =====================================================
         // CONTROLLER CONSTANTS
         // =====================================================
 
-        telemetry.addData(
-                "kF",
-                Outtake.kF
-        );
-
-        telemetry.addData(
-                "kP",
-                Outtake.kP
-        );
-
-        telemetry.addData(
-                "Max Power",
-                Outtake.MAX_POWER
-        );
+        telemetry.addData("kF", Outtake.kF);
+        telemetry.addData("kP", Outtake.kP);
+        telemetry.addData("Max Power", Outtake.MAX_POWER);
 
         // =====================================================
         // INTAKE
         // =====================================================
 
-        telemetry.addData(
-                "Front Intake Speed",
-                RobotConstants.FRONT_INTAKE_SPEED
-        );
-
-        telemetry.addData(
-                "Back Intake Speed",
-                RobotConstants.BACK_INTAKE_SPEED
-        );
+        telemetry.addData("Front Intake Speed", RobotConstants.FRONT_INTAKE_SPEED);
+        telemetry.addData("Back Intake Speed", RobotConstants.BACK_INTAKE_SPEED);
 
         telemetry.addData("Timer", RobotConstants.timer);
         telemetry.addData("TurretPos", RobotConstants.TURRET_POSITION);
+        telemetry.addData("Auto Aim", autoAimMode);
 
         telemetry.addData("Pose", follower.pose());
 
@@ -434,12 +361,9 @@ public class IntakeTest extends OpMode {
     private void updateTurretTargetFromTeleOpGoal() {
         turret.setTargetPose(getTeleOpGoalPose());
     }
+
     private Pose getTeleOpGoalPose() {
-        return new Pose(
-                TELEOP_GOAL_X,
-                TELEOP_GOAL_Y,
-                0
-        );
+        return new Pose(TELEOP_GOAL_X, TELEOP_GOAL_Y, 0);
     }
 
     private double distanceToTeleOpGoalCM(Pose robotPose) {
@@ -556,15 +480,8 @@ public class IntakeTest extends OpMode {
         TELEOP_RESET_HEADING_DEG = BLUE_RESET_HEADING_DEG;
     }
 
-    private double clip(
-            double value,
-            double minimum,
-            double maximum
-    ) {
-        return Math.max(
-                minimum,
-                Math.min(maximum, value)
-        );
+    private double clip(double value, double minimum, double maximum) {
+        return Math.max(minimum, Math.min(maximum, value));
     }
 
     @Override
@@ -578,20 +495,10 @@ public class IntakeTest extends OpMode {
             intake.stopIntake();
         }
 
-        if (frontLeftMotor != null) {
-            frontLeftMotor.setPower(0.0);
-        }
-
-        if (frontRightMotor != null) {
-            frontRightMotor.setPower(0.0);
-        }
-
-        if (backLeftMotor != null) {
-            backLeftMotor.setPower(0.0);
-        }
-
-        if (backRightMotor != null) {
-            backRightMotor.setPower(0.0);
+        // Zero the drive powers and push them to the motors.
+        if (follower != null) {
+            follower.manual(new DrivePowers(0.0, 0.0, 0.0));
+            follower.update();
         }
     }
 }

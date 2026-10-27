@@ -21,13 +21,13 @@ public class Brakes {
     }
 
     public void lowerBrakes() {
-        leftBrakeServo.setPosition(RobotConstants.lowerBrakePos);
-        rightBrakeServo.setPosition(RobotConstants.lowerBrakePos);
+        leftBrakeServo.setPosition(RobotConstants.leftLowerBrakePos);
+        rightBrakeServo.setPosition(RobotConstants.rightLowerBrakePos);
     }
 
     public void liftBrakes() {
-        leftBrakeServo.setPosition(RobotConstants.liftBrakesPos);
-        rightBrakeServo.setPosition(RobotConstants.liftBrakesPos);
+        leftBrakeServo.setPosition(RobotConstants.leftLiftBrakesPos);
+        rightBrakeServo.setPosition(RobotConstants.rightLiftBrakesPos);
     }
 
 
